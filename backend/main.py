@@ -1,190 +1,157 @@
-import os
-from typing import Optional, Dict, Any, List
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime
 
-import pymysql
-from fastapi import FastAPI, HTTPException, Query, Body
-from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
+# -----------------------------
+# Database setup
+# -----------------------------
+DATABASE_URL = "sqlite:///./tasks.db"
 
-load_dotenv()
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-DB_HOST = os.environ["DB_HOST"]
-DB_PORT = int(os.environ["DB_PORT"])
-DB_NAME = os.environ["DB_NAME"]
-DB_USER = os.environ["DB_USER"]
-DB_PASS = os.environ["DB_PASS"]
+Base = declarative_base()
 
-app = FastAPI(
-    title="Mini To-Do API",
-    description="FastAPI + MySQL with plain SQL for tasks",
-    version="1.0.0",
-)
+# -----------------------------
+# DB Model
+# -----------------------------
+class Task(Base):
+    __tablename__ = "tasks"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # your Next.js origin
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    priority = Column(String, nullable=False)
+    due_date = Column(DateTime, nullable=True)
+    completed = Column(Boolean, default=False)
+    completed_date = Column(DateTime, nullable=True)
 
-def get_db_connection():
-    return pymysql.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASS,
-        database=DB_NAME,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False,
+# -----------------------------
+# Pydantic Schemas
+# -----------------------------
+class TaskBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    priority: str
+    due_date: Optional[datetime] = None
+    completed: bool = False
+    completed_date: Optional[datetime] = None
+
+class TaskCreate(TaskBase):
+    pass
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[datetime] = None
+    completed: Optional[bool] = None
+
+class TaskOut(TaskBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+# -----------------------------
+# FastAPI App
+# -----------------------------
+app = FastAPI()
+Base.metadata.create_all(bind=engine)
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# -----------------------------
+# Routes
+# -----------------------------
+
+# Create task
+@app.post("/tasks/", response_model=TaskOut, status_code=201)
+def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+    completed_date = task.completed_date
+    if task.completed and not completed_date:
+        completed_date = datetime.utcnow()
+
+    db_task = Task(
+        title=task.title,
+        description=task.description,
+        priority=task.priority,
+        due_date=task.due_date,
+        completed=task.completed,
+        completed_date=completed_date
     )
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
+    return db_task
 
-# ✅ Create Task
-@app.post("/tasks", status_code=201)
-def create_task(payload: Dict[str, Any] = Body(
-    ...,
-    example={"title": "Buy milk", "description": "2 liters", "priority": "high", "due_date": "2025-08-21"}
-)):
-    title = (payload or {}).get("title")
-    description = (payload or {}).get("description", "")
-    priority = (payload or {}).get("priority")
-    due_date = (payload or {}).get("due_date")
-
-    if not title or not priority:
-        raise HTTPException(status_code=400, detail="title and priority are required")
-
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            sql = "INSERT INTO tasks (title, description, priority, due_date) VALUES (%s, %s, %s, %s)"
-            cur.execute(sql, (title, description, priority, due_date))
-            task_id = cur.lastrowid
-
-            cur.execute("SELECT * FROM tasks WHERE id=%s", (task_id,))
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-# ✅ List Tasks (with filtering and sorting)
-@app.get("/tasks")
-def list_tasks(
-    priority: Optional[str] = Query(default=None),
-    completed: Optional[bool] = Query(default=None),
-    sort: str = Query(default="desc", regex="^(asc|desc)$")
-) -> List[Dict[str, Any]]:
-    conn = get_db_connection()
-    try:
-        sql = "SELECT * FROM tasks WHERE 1 = 1"
-        params = []
-
-        if priority:
-            sql += " AND priority=%s"
-            params.append(priority)
-        if completed is not None:
-            sql += " AND completed=%s"
-            params.append(completed)
-
-        sql += f" ORDER BY due_date {sort.upper()}"
-
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
-        return rows
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-# ✅ Update Task (details only)
-@app.put("/tasks/{task_id}")
-def update_task_details(
-    task_id: int,
-    payload: Dict[str, Any] = Body(..., example={
-        "title": "Updated Task",
-        "description": "New details",
-        "priority": "medium",
-        "due_date": "2025-08-30"
-    })
+# Get all tasks (with optional filtering)
+@app.get("/tasks/", response_model=List[TaskOut])
+def read_tasks(
+    skip: int = 0,
+    limit: int = 100,
+    completed: Optional[bool] = None,   # 👈 Filter param (easy to remove if needed)
+    db: Session = Depends(get_db)
 ):
-    title = payload.get("title")
-    description = payload.get("description")
-    priority = payload.get("priority")
-    due_date = payload.get("due_date")
+    query = db.query(Task)
+    if completed is not None:  # 👈 Easy to remove block
+        query = query.filter(Task.completed == completed)
+    return query.offset(skip).limit(limit).all()
 
-    if not title or not priority:
-        raise HTTPException(status_code=400, detail="title and priority are required")
+# Get single task by ID
+@app.get("/tasks/{task_id}", response_model=TaskOut)
+def read_task(task_id: int, db: Session = Depends(get_db)):
+    db_task = db.query(Task).filter(Task.id == task_id).first()
+    if not db_task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return db_task
 
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            sql = "UPDATE tasks SET title=%s, description=%s, priority=%s, due_date=%s WHERE id=%s"
-            cur.execute(sql, (title, description, priority, due_date, task_id))
-            if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Task not found")
+# Update task
+@app.put("/tasks/{task_id}", response_model=TaskOut)
+def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_db)):
+    db_task = db.query(Task).filter(Task.id == task_id).first()
+    if not db_task:
+        raise HTTPException(status_code=404, detail="Task not found")
 
-            cur.execute("SELECT * FROM tasks WHERE id=%s", (task_id,))
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
+    # Update fields
+    if task.title is not None:
+        db_task.title = task.title
+    if task.description is not None:
+        db_task.description = task.description
+    if task.priority is not None:
+        db_task.priority = task.priority
+    if task.due_date is not None:
+        db_task.due_date = task.due_date
 
-# ✅ Update Task (completed only)
-@app.patch("/tasks/{task_id}/completed")
-def update_task_completed(
-    task_id: int,
-    payload: Dict[str, Any] = Body(..., example={"completed": True})
-):
-    completed = payload.get("completed")
-    if completed is None:
-        raise HTTPException(status_code=400, detail="completed is required")
+    # Handle completion
+    if task.completed is not None:
+        db_task.completed = task.completed
+        if task.completed and not db_task.completed_date:
+            db_task.completed_date = datetime.utcnow()
+        elif not task.completed:
+            db_task.completed_date = None
 
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            sql = "UPDATE tasks SET completed=%s WHERE id=%s"
-            cur.execute(sql, (completed, task_id))
-            if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Task not found")
+    db.commit()
+    db.refresh(db_task)
+    return db_task
 
-            cur.execute("SELECT * FROM tasks WHERE id=%s", (task_id,))
-            row = cur.fetchone()
-        conn.commit()
-        return row
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-# ✅ Delete Task
+# Delete task
 @app.delete("/tasks/{task_id}", status_code=204)
-def delete_task(task_id: int):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
-            if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Task not found")
-        conn.commit()
-        return
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    db_task = db.query(Task).filter(Task.id == task_id).first()
+    if not db_task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    db.delete(db_task)
+    db.commit()
+    return None
