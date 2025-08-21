@@ -1,18 +1,3 @@
-/*CREATE DATABASE IF NOT EXISTS prioritytasks;
-USE prioritytasks;
-
-CREATE TABLE IF NOT EXISTS tasks (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  title VARCHAR(255) NOT NULL,
-  description TEXT,
-  priority ENUM('low', 'medium', 'high') NOT NULL,
-  due_date DATE,
-  completed BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-*/
-
 USE prioritytasks;
 
 CREATE TABLE tasks (

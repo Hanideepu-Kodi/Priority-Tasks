@@ -80,7 +80,7 @@ def list_tasks(
 ) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     try:
-        sql = "SELECT * FROM tasks WHERE 1=1"
+        sql = "SELECT * FROM tasks WHERE 1 = 1"
         params = []
 
         if priority:
