@@ -41,7 +41,7 @@ def get_db_connection():
         autocommit=False,
     )
 
-# ✅ Create Task
+# Create Task
 @app.post("/tasks", status_code=201)
 def create_task(payload: Dict[str, Any] = Body(
     ...,
@@ -72,7 +72,7 @@ def create_task(payload: Dict[str, Any] = Body(
     finally:
         conn.close()
 
-# ✅ List Tasks (with filtering and sorting)
+# List Tasks (with filtering and sorting)
 @app.get("/tasks")
 def list_tasks(
     priority: Optional[str] = Query(default=None),
@@ -102,7 +102,7 @@ def list_tasks(
     finally:
         conn.close()
 
-# ✅ Update Task (details only)
+# Update Task (details only)
 @app.put("/tasks/{task_id}")
 def update_task_details(
     task_id: int,
@@ -141,7 +141,7 @@ def update_task_details(
     finally:
         conn.close()
 
-# ✅ Update Task (completed only)
+# Update Task (completed only)
 @app.patch("/tasks/{task_id}/completed")
 def update_task_completed(task_id: int):
     conn = get_db_connection()
@@ -166,7 +166,7 @@ def update_task_completed(task_id: int):
     finally:
         conn.close()
 
-# ✅ Delete Task
+# Delete Task
 @app.delete("/tasks/{task_id}", status_code=204)
 def delete_task(task_id: int):
     conn = get_db_connection()
