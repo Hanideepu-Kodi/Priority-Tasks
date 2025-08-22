@@ -52,6 +52,18 @@ def create_task(payload: Dict[str, Any] = Body(
     priority = (payload or {}).get("priority")
     due_date = (payload or {}).get("due_date")
 
+    from datetime import date
+
+    # inside create_task and update_task_details before DB query:
+    if due_date:
+        try:
+            due_obj = date.fromisoformat(due_date)
+            if due_obj < date.today():
+                raise HTTPException(status_code=400, detail="Due date cannot be in the past")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid due_date format. Use YYYY-MM-DD")
+
+
     if not title or not priority:
         raise HTTPException(status_code=400, detail="title and priority are required")
 
@@ -105,6 +117,7 @@ def list_tasks(
 # Update Task (details only)
 @app.put("/tasks/{task_id}")
 def update_task_details(
+    
     task_id: int,
     payload: Dict[str, Any] = Body(..., example={
         "title": "Updated Task",
@@ -120,7 +133,15 @@ def update_task_details(
 
     if not title or not priority:
         raise HTTPException(status_code=400, detail="title and priority are required")
-
+    
+    if due_date:
+        try:
+            due_obj = date.fromisoformat(due_date)
+            if due_obj < date.today():
+                raise HTTPException(status_code=400, detail="Due date cannot be in the past")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid due_date format. Use YYYY-MM-DD")
+    
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:

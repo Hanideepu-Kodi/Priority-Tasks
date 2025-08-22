@@ -77,3 +77,22 @@ export const tasksApi = {
 };
 
 export { j, BASE };
+
+export async function addTask(task) {
+  try {
+    const res = await fetch("http://127.0.0.1:4000/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(task),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Something went wrong");
+    }
+
+    return await res.json();
+  } catch (error) {
+    throw error; // pass the error up to frontend
+  }
+}
